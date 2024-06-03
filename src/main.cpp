@@ -68,7 +68,8 @@ WiFiManager      wifiManager; // defined global because of usage in callbacks
 // WiFi definitions
 // ------------------------------------------------------------------------------------------
 #define TELNET_PORT             23
-#define TELNET_ENABLED          false;  // dfault: Telnet is disabled
+#define TELNET_ENABLED          true;   // default: Telnet is enabled
+#define TELNET_DEBUG_ENABLED    false;  // default: Telnet debug is disabled (NMEA output only)
 #define UDP_PORT                10110   // Default UDP Port for transmitting NMEA data.
                                         // Port 10110: NMEA 0183 Navigational Data.  
                                         // Transport of NMEA 0183 sentences over TCP or UDP
@@ -106,6 +107,7 @@ struct __attribute__ ((packed))configParam_st {
   long udpport;
   char passwd[PASSWD_STRING_LENGTH];
   bool entelnet;
+  bool telnetDebug;
   bool entestmode;
   byte chksum;
 } configParam;
@@ -185,6 +187,7 @@ void setConfigParamDefauls() {
   configParam.interval    = SEND_NMEA_STRING_INTERVAL;
   configParam.udpport     = UDP_PORT;
   configParam.entelnet    = TELNET_ENABLED;
+  configParam.telnetDebug = TELNET_DEBUG_ENABLED;
   configParam.entestmode  = FILL_LEVEL_TEST_MODE;
   strcpy(configParam.passwd,WIFI_MANAGER_AP_PASSWD);
   EEPROMsaveConfig();
@@ -245,7 +248,7 @@ void onTelnetConnect(String ip) {
   char cstr[20];
   Serial.println("[Telnet] " + ip + " connected");
   telnet.println("\nWelcome " + telnet.getIP());
-  telnet.println("commands: [bye], [restart]");
+  telnet.println("commands: [bye], [restart], [debug], [off]");
   telnet.println(SKETCH_NAME);
   telnet.println(SKETCH_VERSION);
   telnet.println(SKETCH_ABOUT);
@@ -292,6 +295,14 @@ void setupTelnet() {
       Serial.println("[Telnet] restart requested");
       ESP.restart();
       delay(5000);
+    } else if (str == "debug") {
+      telnet.println("[Telnet] enabling telnet debug.");
+      configParam.telnetDebug = true;
+      EEPROMsaveConfig();
+    } else if (str == "off") {
+      telnet.println("[Telnet] disable telnet debug.");
+      configParam.telnetDebug = false;
+      EEPROMsaveConfig();
     // disconnect the client
     } else if (str == "bye") {
       telnet.println("> disconnecting you...");
@@ -309,24 +320,27 @@ void setupTelnet() {
 }
 // ------------------------------------------------------------------------------------------
 // debugOutOnTelnet (height, filledPerc, filledLiter, batVoltage, analogIn, NMEAString);
-void debugOutOnTelnet (int height, int avgHeight, int filledPerc, double filledLiter, double batVoltage, int analogIn, char* outputStr) {
+void debugOutOnTelnet(int height, int avgHeight, int filledPerc, double filledLiter, double batVoltage, int analogIn, char *outputStr, bool telnetDebug){
 // ------------------------------------------------------------------------------------------
-  if (telnetConnected){
-    char cstr[20];
-    telnet.print("height: ");
-    telnet.print(itoa(height, cstr, 10));
-    telnet.print(" mm, avgHeight: ");
-    telnet.print(itoa(avgHeight, cstr, 10));
-    telnet.print(" mm, analogIn: ");
-    telnet.println(itoa(analogIn, cstr, 10));
-    telnet.print("filledPerc: ");
-    telnet.print(itoa(filledPerc, cstr, 10));
-    telnet.print(" %, filledLiter: ");
-    telnet.print(dtostrf(filledLiter, 0, 1, cstr));
-    telnet.print(" l, batVoltage: ");
-    telnet.println(dtostrf(batVoltage, 0, 1, cstr));
-    telnet.print("UDP=> ");
-    telnet.println(outputStr);
+  if (telnetConnected) {
+    if (telnetDebug)
+    {
+      char cstr[20];
+      telnet.print("height: ");
+      telnet.print(itoa(height, cstr, 10));
+      telnet.print(" mm, avgHeight: ");
+      telnet.print(itoa(avgHeight, cstr, 10));
+      telnet.print(" mm, analogIn: ");
+      telnet.println(itoa(analogIn, cstr, 10));
+      telnet.print("filledPerc: ");
+      telnet.print(itoa(filledPerc, cstr, 10));
+      telnet.print(" %, filledLiter: ");
+      telnet.print(dtostrf(filledLiter, 0, 1, cstr));
+      telnet.print(" l, batVoltage: ");
+      telnet.println(dtostrf(batVoltage, 0, 1, cstr));
+      telnet.print("UDP=> ");
+    }
+    telnet.print(outputStr);
   }
 }
 // ------------------------------------------------------------------------------------------
@@ -455,7 +469,7 @@ void sendNMEA_XDR_sentence (void) {
     Udp.endPacket();
   }
 
-  debugOutOnTelnet (height, avgHeight, filledPerc, filledLiter, batVoltage, analogIn, NMEAString);
+  debugOutOnTelnet (height, avgHeight, filledPerc, filledLiter, batVoltage, analogIn, NMEAString, configParam.telnetDebug );
 
   if (filledPerc > 100) filledPerc = 100;
   int pwmValue = (filledPerc * PWMRANGE) / 100;
@@ -507,6 +521,7 @@ void setup() {
   char buf[10];
   const char *customHtml;
   const char *customHtml_2;
+  const char *customHtml_3;
   WiFiManagerParameter custom_tankhgt ("tankhgt",  "Tank Height [mm] (max. fill level)",itoa(configParam.tankhgt, buf, 10), 4);
   WiFiManagerParameter custom_tankcap ("tankcap",  "Tank Capacity [l]",                 itoa(configParam.tankcap, buf, 10), 4);
   WiFiManagerParameter custom_interval("interval", "Send Interval [s] (UDP interval)",  itoa(configParam.interval, buf, 10), 4);
@@ -516,6 +531,8 @@ void setup() {
   WiFiManagerParameter custom_checkbox("entelnet", "enable Telnet on port 23", "T", 2, customHtml, WFM_LABEL_AFTER); 
   customHtml_2 = configParam.entestmode ? "type=\"checkbox\" checked" : "type=\"checkbox\"";
   WiFiManagerParameter custom_checkbox_2("entestmode", "enable test mode", "T", 2, customHtml_2, WFM_LABEL_AFTER); 
+  customHtml_3 = configParam.telnetDebug ? "type=\"checkbox\" checked" : "type=\"checkbox\"";
+  WiFiManagerParameter custom_checkbox_3("telnetDebug", "enable  Telnet debug", "T", 2, customHtml_3, WFM_LABEL_AFTER); 
                                                                                // The "T" isn't really important, but if the
                                                                                // box is checked the value for this field will
                                                                                // be "T", so we can check for that.
@@ -529,6 +546,7 @@ void setup() {
   wifiManager.addParameter(&custom_passwd);                 
   wifiManager.addParameter(&custom_checkbox);                 
   wifiManager.addParameter(&custom_checkbox_2);                 
+  wifiManager.addParameter(&custom_checkbox_3);                 
   
   switchLEDon();    // indicates open access point
   // start configPortal every time after startup
@@ -550,6 +568,7 @@ void setup() {
   configParam.udpport = atol(custom_udpport.getValue());
   configParam.entelnet = (strncmp(custom_checkbox.getValue(), "T", 1) == 0);
   configParam.entestmode = (strncmp(custom_checkbox_2.getValue(), "T", 1) == 0);
+  configParam.telnetDebug = (strncmp(custom_checkbox_3.getValue(), "T", 1) == 0);
   strcpy(configParam.passwd,custom_passwd.getValue());
 
   if (shouldSaveParameter) {
